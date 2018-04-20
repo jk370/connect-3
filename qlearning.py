@@ -1,11 +1,10 @@
-### Write all your code for Part 1 within or above this cell. 
 import connect
 import numpy as np
 import matplotlib.pyplot as plt
 %matplotlib inline
 
 class Agent():
-    def __init__(self, environment, alpha = 0.1, epsilon=0.2):
+    def __init__(self, environment, alpha=0.1, epsilon=0.2):
         '''Initializes all required variables'''
         self.environment = environment
         self.epsilon = epsilon
@@ -28,17 +27,23 @@ class LearningAgent(Agent):
     
     def choose_move(self):
         '''Returns the chosen move under the e-greedy policy'''
-        # Generate state string for Q-table key
+        # Generate Q-table key for state and symmetrical state
         state_t = np.copy(self.environment.grid)
-        state_t = ''.join(state_t.flatten())
+        board_max_index = np.size(state_t, 1)-1
+        symm_state_t = np.array_str(np.flip(state_t, 1))
+        state_t = np.array_str(state_t)
         
         chance = np.random.uniform(0,1)
         if (chance < self.epsilon):
+            # Generate state and symmetrical state key
             action_t = self.random_move()
             key = state_t + str(action_t)
+            symm_key = symm_state_t + str(board_max_index-action_t)
             # Add state-action to Q-table if new
             if key not in self.Q:
-                self.Q[key] = 0 
+                self.Q[key] = 0
+            if symm_key not in self.Q:
+                self.Q[symm_key] = 0
             return action_t
         
         else:
@@ -46,8 +51,11 @@ class LearningAgent(Agent):
             # Discover available states
             for action in available_actions:
                 key = state_t + str(action)
+                symm_key = symm_state_t + str(board_max_index-action)
                 if key not in self.Q:
                     self.Q[key] = 0
+                if symm_key not in self.Q:
+                    self.Q[symm_key] = 0
                     
             # Find max Q from state
             max_Q = max(self.Q[state_t + str(action)] for action in available_actions)
@@ -63,26 +71,42 @@ class LearningAgent(Agent):
     
     def learn(self, state_t, action_t, reward, state_t1):
         '''Updates Q-table accordingly to learn'''
-        # Convert state, action representation to string for Q-table key
+        # Convert state-action representation to string for Q-table key
+        board_max_index = np.size(state_t, 1)-1
         available_actions = self.environment.available_actions
-        state_t = ''.join(state_t.flatten())
-        state_t1 = ''.join(state_t1.flatten())
+        
+        # Symmetrical variables
+        symm_state_t = np.array_str(np.flip(state_t, 1))
+        symm_state_t1 = np.array_str(np.flip(state_t1, 1))
+        symm_action_t = board_max_index-action_t
+        symm_update_key = symm_state_t + str(symm_action_t)
+        
+        # State variables
+        state_t = np.array_str(state_t)
+        state_t1 = np.array_str(state_t1)
         update_key = state_t + str(action_t)
         
-        # Discover new state-actions
+        
+        # Discover new state-actions for state and symmetrical state
         for action in available_actions:
+            # Generate keys
             key = state_t1 + str(action)
+            symm_key = symm_state_t1 + str(board_max_index-action)
             if key not in self.Q:
                 self.Q[key] = 0
+            if symm_key not in self.Q:
+                self.Q[symm_key] = 0
                 
         # Check if terminal state
         if self.environment.was_winning_move() or self.environment.grid_is_full():
             factor = 0
         else:
+            # Same value for both state and symmetrical state
             factor = self.gamma * max([self.Q[state_t1 + str(action)] for action in available_actions])
         
-        # Amend Q values
+        # Amend Q values for both states
         self.Q[update_key] += (self.alpha * (reward + factor - self.Q[update_key]))
+        self.Q[symm_update_key] += (self.alpha * (reward + factor - self.Q[symm_update_key]))
 
 class RandomAgent(Agent):
     def __init__(self, environment):
@@ -98,9 +122,10 @@ def test(agent, episodes=10):
     # Save old values to allow continuation
     old_epsilon = agent.epsilon
     old_environment = agent.environment
+    # Set new values for policy evaluations
     new_environment = connect.Connect(verbose=False)
     agent.environment = new_environment
-    agent.epsilon = 0
+    agent.epsilon = 0 # Greedy action
     opponent = RandomAgent(environment=new_environment)
     total_reward = 0
     
@@ -142,7 +167,7 @@ def test(agent, episodes=10):
     agent.environment = old_environment
     return agent
 
-def play(max_steps = 25000, ver = False, n=1000):
+def play(max_steps=30000, ver=False, n=1000):
     '''Allows agent to learn through interaction - policy improvement'''
     # Setup players and environment
     steps = 0
@@ -151,7 +176,7 @@ def play(max_steps = 25000, ver = False, n=1000):
     agent = LearningAgent(environment=env)
     
     # Play all steps
-    for _ in range(max_steps):
+    while steps <= max_steps:
         # Reset environment
         env.reset(first_player='o')
         
@@ -159,8 +184,8 @@ def play(max_steps = 25000, ver = False, n=1000):
         action_t = opponent.choose_move()
         env.act(action = action_t)
         
-        # Play episode until win or board is full
-        while not (env.was_winning_move() or env.grid_is_full()) and steps < max_steps:
+        # Play episode until win or board is full - end at max steps
+        while not (env.was_winning_move() or env.grid_is_full()) and steps <= max_steps:
             # Take action from state
             env.change_turn()
             state_t = np.copy(env.grid)
@@ -187,46 +212,12 @@ def play(max_steps = 25000, ver = False, n=1000):
                 
             # Keep track of steps taken
             if (steps % n) == 0:
-                # Play 10 games with no learning and collect total reward gained versus baseline
+                # Play 10 episodes of policy evaluation
                 agent = test(agent, episodes=10)
                 opponent = test(opponent, episodes = 10)
             steps += 1
     
+    # Save rewards for random agent and return single agent
     agent.opponent_rewards = opponent.rewards
     return agent
-
-def plot_learning(agents = 5, step_number=20000, interrupt=500):
-    '''Plots learning graph for episodes played'''
-    plt.figure(1)
-    agent_rewards = []
-    random_rewards = []
-    
-    # Collect returns of all agents playing episodes
-    for _ in range(agents):
-        q_agent = play(max_steps = step_number, ver = False, n=interrupt)
-        agent_rewards.append(q_agent.rewards)
-        random_rewards.append(q_agent.opponent_rewards)
-    
-    # Average agents across all observations
-    agent_rewards = np.mean(agent_rewards, axis=0, dtype=np.float64)
-    random_rewards = np.mean(random_rewards, axis=0, dtype=np.float64)
-    
-    # Create title
-    if agents == 1:
-        title = "Q-learning for 1 agent compared to random baseline"
-    elif agents > 1:
-        agents_str = str(agents)
-        title = "Q-Learning for " + agents_str + " agents compared to random baseline"
-    else:
-        title = "Too few agents given"
-    
-    # Plot figure
-    plt.figure(1)
-    plt.plot(agent_rewards)
-    plt.plot(random_rewards)
-    plt.title(title)
-    plt.xlabel("Number of steps performed (n=" + str(interrupt) + ")")
-    plt.ylabel("Average total reward after 10 episodes")
-    plt.legend(["Q-Agent", "Random Agent"], loc = "best")
-
-#plot_learning(agents=50, step_number=90000, interrupt=3000)
+	
